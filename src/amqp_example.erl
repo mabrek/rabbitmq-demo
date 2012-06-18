@@ -5,22 +5,30 @@
 -compile([export_all]).
 
 test() ->
-    %% Start a network connection
-    {ok, Connection} = amqp_connection:start(#amqp_params_network{}),
+    %% Start a network connection (
+    Params = #amqp_params_network{
+      username = <<"guest">>,
+      password = <<"guest">>,
+      virtual_host = <<"/">>,
+      host = "localhost",
+      port = 5672
+     },
+    {ok, Connection} = amqp_connection:start(Params),
     %% Open a channel on the connection
     {ok, Channel} = amqp_connection:open_channel(Connection),
 
     %% Declare a queue
-    #'queue.declare_ok'{queue = Q}
-        = amqp_channel:call(Channel, #'queue.declare'{}),
+    Queue = <<"demo">>,
+    Declare = #'queue.declare'{queue = Queue, durable = true},
+    #'queue.declare_ok'{} = amqp_channel:call(Channel, Declare),
 
     %% Publish a message
     Payload = <<"foobar">>,
-    Publish = #'basic.publish'{exchange = <<>>, routing_key = Q},
+    Publish = #'basic.publish'{exchange = <<>>, routing_key = Queue},
     amqp_channel:cast(Channel, Publish, #amqp_msg{payload = Payload}),
 
     %% Get the message back from the queue
-    Get = #'basic.get'{queue = Q},
+    Get = #'basic.get'{queue = Queue},
     {#'basic.get_ok'{delivery_tag = Tag}, Content}
         = amqp_channel:call(Channel, Get),
 
