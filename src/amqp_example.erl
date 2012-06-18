@@ -17,17 +17,54 @@ test() ->
     %% Open a channel on the connection
     {ok, Channel} = amqp_connection:open_channel(Connection),
 
+    %% Declare topic exchange
+    Exchange = <<"topic_exchange">>,
+    #'exchange.declare_ok'{} = amqp_channel:call(
+                                Channel,
+                                #'exchange.declare'{
+                                  exchange = Exchange,
+                                  type = <<"topic">>,
+                                  durable = true}),
+
     %% Declare a queue
     Queue = <<"demo">>,
-    Declare = #'queue.declare'{queue = Queue, durable = true},
-    #'queue.declare_ok'{} = amqp_channel:call(Channel, Declare),
+    #'queue.declare_ok'{} = amqp_channel:call(
+                              Channel,
+                              #'queue.declare'{
+                                queue = Queue,
+                                durable = true}),
 
-    %% Publish a message
-    Payload = <<"foobar">>,
-    Publish = #'basic.publish'{exchange = <<>>, routing_key = Queue},
-    amqp_channel:cast(Channel, Publish, #amqp_msg{payload = Payload}),
+    %% Bind queue to exchange
+    %% queue will receive all messages with routing key starting with "prefix."
+    #'queue.bind_ok'{} = amqp_channel:call(
+                           Channel,
+                           #'queue.bind'{
+                             queue = Queue,
+                             exchange = Exchange,
+                             routing_key = <<"prefix.#">>}),
 
-    %% Get the message back from the queue
+    %% Publish message with non-matching routing key
+    amqp_channel:cast(
+      Channel,
+      #'basic.publish'{
+        exchange = Exchange,
+        routing_key = <<"random.routing.key">>},
+      #amqp_msg{payload = <<"qwerty">>}),
+
+    %% Publish message with matching routing key
+    amqp_channel:cast(
+      Channel,
+      #'basic.publish'{
+        exchange = Exchange,
+        routing_key = <<"prefix.suffix">>},
+      #amqp_msg{
+        payload = <<"foobar">>,
+        props = #'P_basic'{
+        delivery_mode = 2     % persistent message
+       }
+      }), 
+
+    %% Get the message back from the queue (poll)
     Get = #'basic.get'{queue = Queue},
     {#'basic.get_ok'{delivery_tag = Tag}, Content}
         = amqp_channel:call(Channel, Get),
@@ -37,6 +74,12 @@ test() ->
 
     %% Ack the message
     amqp_channel:cast(Channel, #'basic.ack'{delivery_tag = Tag}),
+
+    %% message with non-matching routing key was discarded
+    #'basic.get_empty'{} = amqp_channel:call(Channel, Get),
+
+    %% there is a method #'basic.consume' which allows to subscribe to a queue
+    %% instead of polling
 
     %% Close the channel
     amqp_channel:close(Channel),
